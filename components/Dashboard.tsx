@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Sun, Moon, CloudSun, CloudMoon, Cloud, CloudRain, CloudDrizzle, CloudSnow, CloudFog, CloudLightning,
-  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search, Thermometer, Umbrella, Plus,
+  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search, Thermometer, Umbrella, Plus, Smartphone,
 } from 'lucide-react';
 
 /* ---------- types ---------- */
@@ -190,6 +190,15 @@ export default function Dashboard() {
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteError, setNoteError] = useState('');
   const [selectedDay, setSelectedDay] = useState<string | null>(null); // YYYY-MM-DD, null = upcoming list
+  const [compact, setCompact] = useState(false); // phone layout: three swipeable screens
+  const [page, setPage] = useState(0);
+  const screenRef = useRef<HTMLDivElement>(null);
+
+  /* jump back to the first screen whenever the layout mode changes */
+  useEffect(() => {
+    screenRef.current?.scrollTo({ left: 0 });
+    setPage(0);
+  }, [compact]);
 
   /* clock + saved settings */
   useEffect(() => {
@@ -212,6 +221,7 @@ export default function Dashboard() {
         if (s.lon) setLon(s.lon);
         if (s.zone1) setZone1(s.zone1);
         if (s.zone2) setZone2(s.zone2);
+        if (typeof s.compact === 'boolean') setCompact(s.compact);
       }
     } catch { /* ignore malformed saved settings */ }
     setHydrated(true);
@@ -220,8 +230,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!hydrated) return;
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ theme, city, lat, lon, zone1, zone2 })); } catch { /* storage unavailable */ }
-  }, [hydrated, theme, city, lat, lon, zone1, zone2]);
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ theme, city, lat, lon, zone1, zone2, compact })); } catch { /* storage unavailable */ }
+  }, [hydrated, theme, city, lat, lon, zone1, zone2, compact]);
 
   /* sticky note: polled every minute and whenever the tab is shown again, so the iPad catches up */
   const fetchNote = useCallback(async () => {
@@ -478,9 +488,13 @@ export default function Dashboard() {
   const zoneName = (z: string) => TIMEZONES.find(t => t.value === z)?.label ?? z.split('/').pop()?.replaceAll('_', ' ') ?? z;
 
   return (
-    <main className={`dash theme-${theme}`}>
+    <main className={`dash theme-${theme}${compact ? ' compact' : ''}`}>
       <div className="frame">
-        <div className="screen">
+        <div className="screen" ref={screenRef}
+          onScroll={e => {
+            const el = e.currentTarget;
+            setPage(Math.min(2, Math.max(0, Math.round(el.scrollLeft / el.clientWidth))));
+          }}>
           {/* time + weather now */}
           <section className="cell hero">
             <span className="label">Now</span>
@@ -625,6 +639,8 @@ export default function Dashboard() {
           </section>
 
           <button className="gear" aria-label="Open settings" onClick={() => setShowSettings(true)}><Settings2 size={16} /></button>
+          <button className="mode-btn" aria-label="Toggle phone layout" aria-pressed={compact}
+            title="Phone layout" onClick={() => setCompact(c => !c)}><Smartphone size={16} /></button>
         </div>
       </div>
 
@@ -714,6 +730,15 @@ export default function Dashboard() {
 
             <button className="btn done" onClick={() => setShowSettings(false)}>Done</button>
           </aside>
+        </div>
+      )}
+
+      {compact && (
+        <div className="pager">
+          {[0, 1, 2].map(i => (
+            <button key={i} aria-label={`Screen ${i + 1}`} className={page === i ? 'on' : ''}
+              onClick={() => screenRef.current?.scrollTo({ left: i * screenRef.current.clientWidth, behavior: 'smooth' })} />
+          ))}
         </div>
       )}
     </main>
