@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import {
   Sun, Moon, CloudSun, CloudMoon, Cloud, CloudRain, CloudDrizzle, CloudSnow, CloudFog, CloudLightning,
-  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search,
+  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search, Thermometer, Umbrella,
 } from 'lucide-react';
 
 /* ---------- types ---------- */
-type Theme = 'forest' | 'paper';
+type Theme = 'forest' | 'midnight' | 'ember' | 'meadow' | 'paper' | 'eink';
 type WeatherDay = { date: string; code: number; max: number; min: number; rain: number };
 type Weather = {
   current: { temp: number; feels: number; humidity: number; wind: number; code: number; isDay: boolean };
@@ -20,7 +20,16 @@ type CalEvent = { id: string; title: string; start: string; end: string; allDay:
 /* ---------- constants ---------- */
 const SETTINGS_KEY = 'daymark-settings-v2';
 const EPOCH = new Date(0);
-const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const RAIN_HINT_PCT = 50; // show the umbrella at or above this chance of rain today
+const THEMES: { id: Theme; label: string }[] = [
+  { id: 'forest', label: 'Forest' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'ember', label: 'Ember' },
+  { id: 'meadow', label: 'Meadow' },
+  { id: 'paper', label: 'Paper' },
+  { id: 'eink', label: 'E-ink' },
+];
+const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // weeks start on Monday
 const TIMEZONES = [
   { value: 'Asia/Kolkata', label: 'Hyderabad' },
   { value: 'America/Toronto', label: 'Toronto' },
@@ -29,6 +38,7 @@ const TIMEZONES = [
   { value: 'America/Los_Angeles', label: 'Los Angeles' },
   { value: 'Europe/London', label: 'London' },
   { value: 'Europe/Amsterdam', label: 'Amsterdam' },
+  { value: 'Europe/Dublin', label: 'Dublin' },
   { value: 'Asia/Dubai', label: 'Dubai' },
   { value: 'Asia/Singapore', label: 'Singapore' },
   { value: 'Asia/Tokyo', label: 'Tokyo' },
@@ -39,6 +49,7 @@ const TIMEZONES = [
 const pad = (n: number) => String(n).padStart(2, '0');
 const dateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseDay = (s: string) => new Date(`${s}T00:00:00`);
+const isTheme = (t: unknown): t is Theme => THEMES.some(x => x.id === t);
 
 function clockParts(date: Date, zone?: string) {
   const parts = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).formatToParts(date);
@@ -71,6 +82,18 @@ function weatherInfo(code: number, isDay = true) {
   if (code >= 80 && code <= 82) return { Icon: CloudRain, label: 'Showers' };
   if (code >= 95) return { Icon: CloudLightning, label: 'Thunderstorm' };
   return { Icon: Cloud, label: 'Cloudy' };
+}
+
+/** lucide has no sun hat, so this one matches its stroke style. */
+function SunHat({ size = 24, strokeWidth = 2 }: { size?: number; strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 13c0-4.5 2-8 5-8s5 3.5 5 8" />
+      <path d="M2.5 14.5c0-1 4.3-1.8 9.5-1.8s9.5.8 9.5 1.8c0 1.8-4.3 3.5-9.5 3.5s-9.5-1.7-9.5-3.5z" />
+      <path d="M7.2 11.2c3 .8 6.6.8 9.6 0" />
+    </svg>
+  );
 }
 
 /** Every calendar day (YYYY-MM-DD) an event touches. */
@@ -151,7 +174,7 @@ export default function Dashboard() {
       const saved = localStorage.getItem(SETTINGS_KEY);
       if (saved) {
         const s = JSON.parse(saved);
-        if (s.theme === 'forest' || s.theme === 'paper') setTheme(s.theme);
+        if (isTheme(s.theme)) setTheme(s.theme);
         if (s.city) setCity(s.city);
         if (s.lat) setLat(s.lat);
         if (s.lon) setLon(s.lon);
@@ -167,6 +190,31 @@ export default function Dashboard() {
     if (!hydrated) return;
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ theme, city, lat, lon, zone1, zone2 })); } catch { /* storage unavailable */ }
   }, [hydrated, theme, city, lat, lon, zone1, zone2]);
+
+  /* keep the screen awake. Needs HTTPS (or localhost). The browser drops the lock whenever the
+     tab is hidden, so it is re-acquired when the tab becomes visible again. */
+  useEffect(() => {
+    if (!('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        const l = await navigator.wakeLock.request('screen');
+        if (cancelled) { l.release().catch(() => {}); return; }
+        lock = l;
+      } catch { /* denied, e.g. battery saver or insecure context */ }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && (!lock || lock.released)) acquire();
+    };
+    acquire();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      lock?.release().catch(() => {});
+    };
+  }, []);
 
   /* weather: Open-Meteo, no key needed */
   const fetchWeather = useCallback(async () => {
@@ -283,7 +331,7 @@ export default function Dashboard() {
 
   const shownMonth = month ?? { year: current.getFullYear(), month: current.getMonth() };
   const calCells = useMemo(() => {
-    const first = new Date(shownMonth.year, shownMonth.month, 1).getDay();
+    const first = (new Date(shownMonth.year, shownMonth.month, 1).getDay() + 6) % 7; // Monday = 0
     const count = new Date(shownMonth.year, shownMonth.month + 1, 0).getDate();
     return [...Array(first).fill(null), ...Array.from({ length: count }, (_, i) => i + 1)] as (number | null)[];
   }, [shownMonth.year, shownMonth.month]);
@@ -297,15 +345,28 @@ export default function Dashboard() {
 
   const { time, period } = clockParts(now);
   const nowInfo = weather ? weatherInfo(weather.current.code, weather.current.isDay) : null;
+
+  /* umbrella if it is raining or likely to today; hat if it is clear and daytime; otherwise nothing */
+  let hint: { Icon: ComponentType<{ size?: number; strokeWidth?: number }>; text: string } | null = null;
+  if (weather) {
+    const code = weather.current.code;
+    const rainToday = weather.days[0]?.rain ?? 0;
+    const rainingNow = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+    if (rainingNow) hint = { Icon: Umbrella, text: 'Raining now. Take an umbrella.' };
+    else if (rainToday >= RAIN_HINT_PCT) hint = { Icon: Umbrella, text: `${rainToday}% chance of rain. Take an umbrella.` };
+    else if (code <= 2 && weather.current.isDay) hint = { Icon: SunHat, text: 'Sunny out. Wear a hat.' };
+  }
   const zoneName = (z: string) => TIMEZONES.find(t => t.value === z)?.label ?? z.split('/').pop()?.replaceAll('_', ' ') ?? z;
 
   return (
     <main className={`dash theme-${theme}`}>
       <div className="frame">
         <div className="screen">
-          {/* time + weather now + world clocks */}
+          {/* time + weather now */}
           <section className="cell hero">
-            <div>
+            <span className="label">Now</span>
+
+            <div className="hero-time">
               <div className="clock">{time}<span className="period">{period}</span></div>
               <div className="date">{new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(now)}</div>
             </div>
@@ -313,47 +374,48 @@ export default function Dashboard() {
             <div className="now">
               {weather && nowInfo ? (
                 <>
-                  <nowInfo.Icon className="now-icon" size={58} strokeWidth={1.5} />
+                  <nowInfo.Icon className="now-icon" size={64} strokeWidth={1.5} />
                   <div className="now-temp">{weather.current.temp}°</div>
                   <div className="now-text">
                     <strong>{nowInfo.label}</strong>
-                    <span className="where"><MapPin size={13} />{city}</span>
+                    <span className="where"><MapPin size={16} />{city}</span>
                   </div>
                 </>
               ) : (
                 <div className="now-text"><strong>{weatherError ? 'Weather unavailable' : 'Loading weather'}</strong>
-                  <span className="where"><MapPin size={13} />{city}</span></div>
+                  <span className="where"><MapPin size={16} />{city}</span></div>
               )}
             </div>
 
-            {weather && (
-              <div className="stats">
-                <span><Droplets size={15} />{weather.current.humidity}% humidity</span>
-                <span><Wind size={15} />{weather.current.wind} km/h</span>
-                <span>Feels like {weather.current.feels}°</span>
-                <span><Sunrise size={15} />{to12h(weather.sunrise)}</span>
-                <span><Sunset size={15} />{to12h(weather.sunset)}</span>
+            {hint && (
+              <div className="hint">
+                <hint.Icon size={30} strokeWidth={1.6} />
+                <span>{hint.text}</span>
               </div>
             )}
 
-            <div className="zones">
-              {[zone1, zone2].map(z => (
-                <div className="zone" key={z}>
-                  <span>{zoneName(z)}</span>
-                  <strong>{fmtTime(now, z)}</strong>
-                  <small>{fmtShortDate(now, z)}</small>
+            {weather && (
+              <div className="stats">
+                <div className="stat-line">
+                  <span><Droplets size={20} />{weather.current.humidity}% humidity</span>
+                  <span><Wind size={20} />{weather.current.wind} km/h</span>
+                  <span><Thermometer size={20} />Feels like {weather.current.feels}°</span>
                 </div>
-              ))}
-            </div>
+                <div className="stat-line sun">
+                  <span><Sunrise size={20} />{to12h(weather.sunrise)}</span>
+                  <span><Sunset size={20} />{to12h(weather.sunset)}</span>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* month calendar */}
           <section className="cell cal">
             <div className="cell-head">
-              <h2 className="cell-title">{new Date(shownMonth.year, shownMonth.month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h2>
+              <span className="label">{new Date(shownMonth.year, shownMonth.month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</span>
               <div className="cal-nav">
-                <button onClick={() => shiftMonth(-1)} aria-label="Previous month"><ChevronLeft size={18} /></button>
-                <button onClick={() => shiftMonth(1)} aria-label="Next month"><ChevronRight size={18} /></button>
+                <button onClick={() => shiftMonth(-1)} aria-label="Previous month"><ChevronLeft size={20} /></button>
+                <button onClick={() => shiftMonth(1)} aria-label="Next month"><ChevronRight size={20} /></button>
               </div>
             </div>
             <div className="cal-weekdays">{WEEKDAYS.map((d, i) => <div key={i}>{d}</div>)}</div>
@@ -371,9 +433,23 @@ export default function Dashboard() {
             </div>
           </section>
 
+          {/* world clocks */}
+          <section className="cell zones-cell">
+            <span className="label">World clock</span>
+            <div className="zones">
+              {[zone1, zone2].map(z => (
+                <div className="zone" key={z}>
+                  <span>{zoneName(z)}</span>
+                  <strong>{fmtTime(now, z)}</strong>
+                  <small>{fmtShortDate(now, z)}</small>
+                </div>
+              ))}
+            </div>
+          </section>
+
           {/* upcoming events */}
           <section className="cell agenda">
-            <h2 className="cell-title">Coming up</h2>
+            <span className="label">Coming up</span>
             <div className="agenda-list">
               {agenda.length ? agenda.map(group => (
                 <div className="group" key={group.day}>
@@ -381,18 +457,19 @@ export default function Dashboard() {
                   {group.items.map(e => (
                     <div className="item" key={`${e.id}-${group.day}`}>
                       <span className="time">{e.allDay ? 'All day' : fmtTime(new Date(e.start))}</span>
-                      <span className={`mark mark-${e.calendarIndex % 3}`} />
+                      <span className={`mark mark-${e.calendarIndex % 5}`} />
                       <span className="title">{e.title}</span>
                     </div>
                   ))}
                 </div>
               )) : <p className="empty">No upcoming events.</p>}
             </div>
-            {isDemo && <p className="agenda-note">These are sample events. Add your Google Calendar credentials to see yours.</p>}
+            {isDemo && <p className="agenda-note">Sample events. Add Google Calendar credentials to see yours.</p>}
           </section>
 
           {/* seven-day forecast */}
           <section className="cell week">
+            <span className="label">7-day forecast</span>
             {weather ? (
               <div className="week-grid">
                 {weather.days.map((day, i) => {
@@ -400,10 +477,10 @@ export default function Dashboard() {
                   return (
                     <div className={`day ${i === 0 ? 'today' : ''}`} key={day.date}>
                       <span className="day-name">{i === 0 ? 'Today' : new Date(`${day.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                      <Icon size={28} strokeWidth={1.6} />
+                      <Icon size={34} strokeWidth={1.6} />
                       <span className="hi">{day.max}°</span>
                       <span className="lo">{day.min}°</span>
-                      <span className="rain"><Droplet size={11} />{day.rain}%</span>
+                      <span className="rain"><Droplet size={14} />{day.rain}%</span>
                     </div>
                   );
                 })}
@@ -411,7 +488,7 @@ export default function Dashboard() {
             ) : <p className="empty">{weatherError ? 'Forecast unavailable. Retrying every 30 minutes.' : 'Loading forecast'}</p>}
           </section>
 
-          <button className="gear" aria-label="Open settings" onClick={() => setShowSettings(true)}><Settings2 size={18} /></button>
+          <button className="gear" aria-label="Open settings" onClick={() => setShowSettings(true)}><Settings2 size={16} /></button>
         </div>
       </div>
 
@@ -425,12 +502,11 @@ export default function Dashboard() {
 
             <span className="field-label">Look</span>
             <div className="theme-row">
-              <button className={`theme-btn ${theme === 'forest' ? 'on' : ''}`} onClick={() => setTheme('forest')}>
-                <i className="swatch swatch-forest" />Forest{theme === 'forest' && <Check size={14} />}
-              </button>
-              <button className={`theme-btn ${theme === 'paper' ? 'on' : ''}`} onClick={() => setTheme('paper')}>
-                <i className="swatch swatch-paper" />Paper{theme === 'paper' && <Check size={14} />}
-              </button>
+              {THEMES.map(t => (
+                <button key={t.id} className={`theme-btn ${theme === t.id ? 'on' : ''}`} onClick={() => setTheme(t.id)}>
+                  <i className={`swatch swatch-${t.id}`} />{t.label}{theme === t.id && <Check size={14} />}
+                </button>
+              ))}
             </div>
 
             <label className="field-label" htmlFor="geo">Weather location: {city}</label>

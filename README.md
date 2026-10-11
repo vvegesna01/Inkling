@@ -8,7 +8,8 @@ A home dashboard for a wall or shelf display, built with Next.js and TypeScript.
 - Two world clocks
 - Current weather, humidity, wind, sunrise and sunset, plus a seven-day forecast from Open-Meteo (no API key)
 - City search for the weather location
-- Month calendar with event dots
+- Month calendar (weeks start on Monday) with event dots
+- Password-protected site
 - Upcoming events from Google Calendar (read-only, one or more calendars)
 - Forest and Paper themes
 - Settings saved in the browser
@@ -48,6 +49,14 @@ On Vercel, add the same three variables under **Project → Settings → Environ
 
 The browser never sees your credentials. It calls `/api/calendar`, which runs on the server, looks 60 days ahead, and is cached for five minutes. The dashboard refreshes it every ten minutes.
 
+## Password
+
+The whole site, including the calendar endpoint, sits behind a password. Set `DASHBOARD_PASSWORD` in `.env.local` and in Vercel. Visitors see a sign-in page, and a correct password keeps that device signed in for a year. If the variable is missing on a deployed site, the site refuses to load instead of showing your calendar.
+
+To change the password, update the variable, redeploy, and sign in again on each device.
+
+If Next.js 16 warns that `middleware.ts` is deprecated, rename the file to `proxy.ts` and rename the exported function to `proxy`.
+
 ## Weather
 
 Open **Settings** (the gear in the bottom-right corner), type a city and press search. Coordinates are filled in for you. The forecast refreshes every 30 minutes. If the weather service cannot be reached, the dashboard says so instead of showing made-up numbers.
@@ -66,4 +75,5 @@ A website cannot force iPadOS to keep the screen awake. Auto-Lock and Guided Acc
 - `app/page.tsx`: the dashboard
 - `app/globals.css`: themes, frame and layout
 - `app/api/calendar/route.ts`: Google Calendar endpoint
+- `middleware.ts`, `app/login/page.tsx`, `app/api/login/route.ts`: password protection
 - `.env.example`: environment variables
