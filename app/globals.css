@@ -123,7 +123,7 @@ input, select { font: inherit; color: inherit; }
 .hero { grid-area: hero; gap: 18px; justify-content: space-between; }
 .cal { grid-area: cal; }
 .zones-cell { grid-area: zones; }
-.agenda { grid-area: agenda; padding-bottom: 50px; } /* room for the settings gear */
+.agenda { grid-area: agenda; position: relative; padding-bottom: 50px; } /* room for the add-note and settings buttons */
 .week { grid-area: week; background: var(--screen-2); gap: 14px; }
 
 /* small mono section label, shared by every cell */
@@ -168,6 +168,20 @@ input, select { font: inherit; color: inherit; }
 .hint svg { flex-shrink: 0; color: var(--accent); }
 .theme-eink .hint { border: 2px solid var(--ink); border-radius: 6px; }
 
+/* sticky note: real post-its look the same everywhere, so colours are fixed per note, not per theme */
+.note-yellow { --note-bg: #fff1a8; }
+.note-pink   { --note-bg: #ffc9d9; }
+.note-blue   { --note-bg: #c6e3ff; }
+.note-green  { --note-bg: #ccf0c8; }
+.note-lilac  { --note-bg: #e0d2ff; }
+.note { position: relative; padding: 14px 44px 12px 16px; background: var(--note-bg); color: #2b2a24; border-radius: 4px 4px 16px 4px; box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .5); transform: rotate(-1.2deg); margin-top: 12px; flex-shrink: 0; }
+.note p { font-size: 1.25rem; line-height: 1.3; font-weight: 500; overflow-wrap: anywhere; }
+.note small { display: block; margin-top: 8px; font-family: var(--mono); font-size: .8rem; opacity: .65; }
+.note-x { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: #2b2a24; opacity: .6; }
+.note-x:hover { opacity: 1; background: rgba(0, 0, 0, .08); }
+.theme-eink .note { background: var(--screen); color: var(--ink); border: 2px solid var(--ink); border-radius: 6px; box-shadow: 4px 4px 0 var(--ink); transform: none; }
+.theme-eink .note-x { color: var(--ink); }
+
 /* ---------- world clocks ---------- */
 .zones { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 20px; }
 .zone { display: flex; flex-direction: column; gap: 1px; }
@@ -190,6 +204,15 @@ input, select { font: inherit; color: inherit; }
 .theme-eink .cal-day span { border-radius: 4px; }
 .theme-eink .dot { border-radius: 0; }
 .theme-eink .dot.on { width: 8px; height: 8px; margin-left: -4px; }
+
+/* tapping a date shows its events in the right column; tapping the month name goes back */
+.cal-day { -webkit-tap-highlight-color: transparent; }
+.cal-day:not(.today):hover span { background: var(--screen-2); }
+.cal-day.selected span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.month-btn { padding: 0; }
+.theme-eink .month-btn { padding: 2px 7px; }
+.month-btn.active { text-decoration: underline; text-underline-offset: 4px; }
+.dash:not(.theme-eink) .month-btn.active { color: var(--ink); }
 
 /* ---------- agenda ---------- */
 .agenda-list { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 22px; margin-top: 20px; }
@@ -231,6 +254,8 @@ input, select { font: inherit; color: inherit; }
 
 .gear { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); opacity: .6; }
 .gear:hover { opacity: 1; color: var(--ink); }
+.add-note { position: absolute; right: 52px; bottom: 10px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); opacity: .6; }
+.add-note:hover { opacity: 1; color: var(--ink); }
 
 /* ---------- settings drawer ---------- */
 .backdrop { position: fixed; inset: 0; z-index: 20; display: flex; justify-content: flex-end; background: rgba(10, 8, 5, .5); }
@@ -264,6 +289,22 @@ input, select { font: inherit; color: inherit; }
 .swatch-ember { background: linear-gradient(135deg, #261a16 50%, #f08a5d 50%); }
 .swatch-meadow { background: linear-gradient(135deg, #fbf6ea 50%, #c8553a 50%); }
 
+/* ---------- note composer ---------- */
+.backdrop.center { align-items: center; justify-content: center; padding: 16px; }
+.composer { display: flex; flex-direction: column; gap: 10px; width: min(460px, 100%); max-height: 100%; overflow: auto; padding: 22px; background: var(--screen); color: var(--ink); border: 1px solid var(--line); border-radius: 18px; }
+.theme-eink .composer { border: 2px solid var(--ink); border-radius: 10px; }
+.note-input { resize: none; min-height: 120px; background: var(--note-bg); color: #2b2a24; border-color: transparent; font-size: 1.2rem; line-height: 1.35; }
+.theme-eink .note-input { background: var(--screen); color: var(--ink); border: 2px solid var(--ink); }
+.note-count { align-self: flex-end; margin-top: -4px; color: var(--muted); font-family: var(--mono); font-size: .8rem; }
+.color-field { display: flex; flex-direction: column; gap: 10px; }
+.theme-eink .color-field { display: none; } /* colours mean nothing on e-ink */
+.swatch-row { display: flex; gap: 12px; }
+.color-btn { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--note-bg); color: #2b2a24; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .2); }
+.color-btn.on { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .2), 0 0 0 3px var(--screen), 0 0 0 5px var(--accent); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 44px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; font-size: .95rem; }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
 /* ---------- smaller screens ---------- */
 @media (max-width: 1100px) and (orientation: portrait) {
   .dash, .frame { height: auto; min-height: 100dvh; }
@@ -271,7 +312,7 @@ input, select { font: inherit; color: inherit; }
     grid-template-columns: 1fr 1fr; grid-template-rows: none;
     grid-template-areas: "hero hero" "cal agenda" "zones agenda" "week week";
   }
-  .agenda { padding-bottom: clamp(16px, 1.8vw, 26px); }
+  .agenda { padding-bottom: 56px; }
   .week { padding-right: 64px; }
 }
 @media (max-width: 900px) {
@@ -283,6 +324,8 @@ input, select { font: inherit; color: inherit; }
   /* settings button floats over the page so it is always reachable on a long scroll */
   .gear { position: fixed; z-index: 10; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: 44px; height: 44px; opacity: 1; background: var(--screen); box-shadow: 0 0 0 1px var(--line), 0 6px 16px rgba(0, 0, 0, .25); }
   .theme-eink .gear { box-shadow: 0 0 0 2px var(--ink); }
+  .add-note { position: fixed; z-index: 10; right: calc(max(16px, env(safe-area-inset-right)) + 56px); bottom: max(16px, env(safe-area-inset-bottom)); width: 44px; height: 44px; opacity: 1; background: var(--screen); box-shadow: 0 0 0 1px var(--line), 0 6px 16px rgba(0, 0, 0, .25); }
+  .theme-eink .add-note { box-shadow: 0 0 0 2px var(--ink); }
 }
 @media (max-width: 600px) {
   .dash { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }

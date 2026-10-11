@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Sun, Moon, CloudSun, CloudMoon, Cloud, CloudRain, CloudDrizzle, CloudSnow, CloudFog, CloudLightning,
-  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search, Thermometer, Umbrella,
+  ChevronLeft, ChevronRight, MapPin, Settings2, X, Check, Droplets, Droplet, Wind, Sunrise, Sunset, Search, Thermometer, Umbrella, Plus,
 } from 'lucide-react';
 
 /* ---------- types ---------- */
@@ -21,6 +21,27 @@ type CalEvent = { id: string; title: string; start: string; end: string; allDay:
 const SETTINGS_KEY = 'daymark-settings-v2';
 const EPOCH = new Date(0);
 const RAIN_HINT_PCT = 50; // show the umbrella at or above this chance of rain today
+
+/* sticky note: one shared note, stored by /api/note and polled by every device */
+const NOTE_KEY_STORAGE = 'daymark-note-key';
+const NOTE_SEEN_STORAGE = 'daymark-note-dismissed';
+const NOTE_MAX = 140;
+const NOTE_COLORS = ['yellow', 'pink', 'blue', 'green', 'lilac'] as const;
+type NoteColor = (typeof NOTE_COLORS)[number];
+type Note = { id: number; text: string; color: NoteColor; expiresAt: number };
+const NOTE_EXPIRIES = [
+  { label: '1 hour', minutes: 60 },
+  { label: '4 hours', minutes: 240 },
+  { label: '1 day', minutes: 1440 },
+  { label: '3 days', minutes: 4320 },
+  { label: '1 week', minutes: 10080 },
+];
+function timeLeft(expiresAt: number, nowMs: number) {
+  const mins = Math.max(0, Math.round((expiresAt - nowMs) / 60000));
+  if (mins < 60) return `${Math.max(mins, 1)}m left`;
+  if (mins < 60 * 48) return `${Math.round(mins / 60)}h left`;
+  return `${Math.round(mins / 1440)}d left`;
+}
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'forest', label: 'Forest' },
   { id: 'midnight', label: 'Midnight' },
@@ -158,6 +179,17 @@ export default function Dashboard() {
   const [geoQuery, setGeoQuery] = useState('');
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoError, setGeoError] = useState('');
+  const [note, setNote] = useState<Note | null>(null);
+  const [dismissedId, setDismissedId] = useState<number | null>(null);
+  const [showComposer, setShowComposer] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteColor, setNoteColor] = useState<NoteColor>('yellow');
+  const [noteMinutes, setNoteMinutes] = useState(1440);
+  const [noteKey, setNoteKey] = useState('');
+  const [keySaved, setKeySaved] = useState(false);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteError, setNoteError] = useState('');
+  const [selectedDay, setSelectedDay] = useState<string | null>(null); // YYYY-MM-DD, null = upcoming list
 
   /* clock + saved settings */
   useEffect(() => {
@@ -190,6 +222,37 @@ export default function Dashboard() {
     if (!hydrated) return;
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ theme, city, lat, lon, zone1, zone2 })); } catch { /* storage unavailable */ }
   }, [hydrated, theme, city, lat, lon, zone1, zone2]);
+
+  /* sticky note: polled every minute and whenever the tab is shown again, so the iPad catches up */
+  const fetchNote = useCallback(async () => {
+    try {
+      const res = await fetch('/api/note', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Note unavailable');
+      const data = await res.json();
+      setNote(data.note ?? null);
+    } catch { /* keep showing whatever we already have */ }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const k = localStorage.getItem(NOTE_KEY_STORAGE);
+      if (k) { setNoteKey(k); setKeySaved(true); }
+      const seen = localStorage.getItem(NOTE_SEEN_STORAGE);
+      if (seen) setDismissedId(Number(seen));
+    } catch { /* storage unavailable */ }
+    fetchNote();
+    const timer = window.setInterval(fetchNote, 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchNote(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [fetchNote]);
+
+  /* a tapped day reverts to the upcoming list after 2 minutes, so a wall display never gets stuck on it */
+  useEffect(() => {
+    if (!selectedDay) return;
+    const timer = window.setTimeout(() => setSelectedDay(null), 2 * 60 * 1000);
+    return () => window.clearTimeout(timer);
+  }, [selectedDay]);
 
   /* keep the screen awake. Needs HTTPS (or localhost). The browser drops the lock whenever the
      tab is hidden, so it is re-acquired when the tab becomes visible again. */
@@ -295,6 +358,49 @@ export default function Dashboard() {
     }
   };
 
+  const postNote = async () => {
+    const text = noteText.trim();
+    const key = noteKey.trim();
+    if (!text) return;
+    if (!key) { setNoteError('Enter the passcode.'); return; }
+    setNoteBusy(true);
+    setNoteError('');
+    try {
+      const res = await fetch('/api/note', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-note-key': key },
+        body: JSON.stringify({ text, color: noteColor, minutes: noteMinutes }),
+      });
+      if (res.status === 401) {
+        try { localStorage.removeItem(NOTE_KEY_STORAGE); } catch { /* storage unavailable */ }
+        setKeySaved(false);
+        setNoteError('Wrong passcode.');
+        return;
+      }
+      if (!res.ok) { setNoteError('Could not save the note.'); return; }
+      const data = await res.json();
+      try { localStorage.setItem(NOTE_KEY_STORAGE, key); } catch { /* storage unavailable */ }
+      setKeySaved(true);
+      setNote(data.note);
+      setNoteText('');
+      setShowComposer(false);
+    } catch {
+      setNoteError('Could not reach the server.');
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  /* hides the note on this device right away; with a saved passcode it is also removed everywhere */
+  const dismissNote = async () => {
+    if (!note) return;
+    setDismissedId(note.id);
+    try { localStorage.setItem(NOTE_SEEN_STORAGE, String(note.id)); } catch { /* storage unavailable */ }
+    if (keySaved) {
+      try { await fetch('/api/note', { method: 'DELETE', headers: { 'x-note-key': noteKey } }); } catch { /* offline */ }
+    }
+  };
+
   /* derived data */
   const current = now ?? EPOCH;
   const todayKey = dateKey(current);
@@ -329,6 +435,17 @@ export default function Dashboard() {
     return groups;
   }, [sourceEvents, todayKey, current]);
 
+  /* every event touching the selected day, all-day first, then by start time (past ones included) */
+  const dayEvents = useMemo(() => {
+    if (!selectedDay) return [];
+    return sourceEvents
+      .filter(e => spanKeys(e).includes(selectedDay))
+      .sort((a, b) =>
+        (a.allDay === b.allDay ? 0 : a.allDay ? -1 : 1) ||
+        new Date(a.start).getTime() - new Date(b.start).getTime());
+  }, [sourceEvents, selectedDay]);
+  const shownGroups = selectedDay ? [{ day: selectedDay, items: dayEvents }] : agenda;
+
   const shownMonth = month ?? { year: current.getFullYear(), month: current.getMonth() };
   const calCells = useMemo(() => {
     const first = (new Date(shownMonth.year, shownMonth.month, 1).getDay() + 6) % 7; // Monday = 0
@@ -346,15 +463,17 @@ export default function Dashboard() {
   const { time, period } = clockParts(now);
   const nowInfo = weather ? weatherInfo(weather.current.code, weather.current.isDay) : null;
 
+  const visibleNote = note && note.id !== dismissedId && note.expiresAt > now.getTime() ? note : null;
+
   /* umbrella if it is raining or likely to today; hat if it is clear and daytime; otherwise nothing */
-  let hint: { Icon: ComponentType<{ size?: number; strokeWidth?: number }>; text: string } | null = null;
+  let hint: { kind: 'umbrella' | 'hat'; text: string } | null = null;
   if (weather) {
     const code = weather.current.code;
     const rainToday = weather.days[0]?.rain ?? 0;
     const rainingNow = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
-    if (rainingNow) hint = { Icon: Umbrella, text: 'Raining now. Take an umbrella.' };
-    else if (rainToday >= RAIN_HINT_PCT) hint = { Icon: Umbrella, text: `${rainToday}% chance of rain. Take an umbrella.` };
-    else if (code <= 2 && weather.current.isDay) hint = { Icon: SunHat, text: 'Sunny out. Wear a hat.' };
+    if (rainingNow) hint = { kind: 'umbrella', text: 'Raining now. Take an umbrella.' };
+    else if (rainToday >= RAIN_HINT_PCT) hint = { kind: 'umbrella', text: `${rainToday}% chance of rain. Take an umbrella.` };
+    else if (code <= 2 && weather.current.isDay) hint = { kind: 'hat', text: 'Sunny out. Wear a hat.' };
   }
   const zoneName = (z: string) => TIMEZONES.find(t => t.value === z)?.label ?? z.split('/').pop()?.replaceAll('_', ' ') ?? z;
 
@@ -389,7 +508,7 @@ export default function Dashboard() {
 
             {hint && (
               <div className="hint">
-                <hint.Icon size={30} strokeWidth={1.6} />
+                {hint.kind === 'umbrella' ? <Umbrella size={30} strokeWidth={1.6} /> : <SunHat size={30} strokeWidth={1.6} />}
                 <span>{hint.text}</span>
               </div>
             )}
@@ -412,7 +531,10 @@ export default function Dashboard() {
           {/* month calendar */}
           <section className="cell cal">
             <div className="cell-head">
-              <span className="label">{new Date(shownMonth.year, shownMonth.month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</span>
+              <button type="button" className={`label month-btn ${selectedDay ? 'active' : ''}`} onClick={() => setSelectedDay(null)}
+                title={selectedDay ? 'Back to upcoming events' : undefined}>
+                {new Date(shownMonth.year, shownMonth.month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+              </button>
               <div className="cal-nav">
                 <button onClick={() => shiftMonth(-1)} aria-label="Previous month"><ChevronLeft size={20} /></button>
                 <button onClick={() => shiftMonth(1)} aria-label="Next month"><ChevronRight size={20} /></button>
@@ -424,10 +546,13 @@ export default function Dashboard() {
                 if (!day) return <div key={`blank-${i}`} />;
                 const key = `${shownMonth.year}-${pad(shownMonth.month + 1)}-${pad(day)}`;
                 return (
-                  <div key={key} className={`cal-day ${key === todayKey ? 'today' : ''}`}>
+                  <button key={key} type="button" aria-pressed={key === selectedDay}
+                    aria-label={`${parseDay(key).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}${eventDays.has(key) ? ', has events' : ''}`}
+                    className={`cal-day ${key === todayKey ? 'today' : ''} ${key === selectedDay ? 'selected' : ''}`}
+                    onClick={() => setSelectedDay(s => (s === key ? null : key))}>
                     <span>{day}</span>
                     <b className={eventDays.has(key) ? 'dot on' : 'dot'} />
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -449,22 +574,33 @@ export default function Dashboard() {
 
           {/* upcoming events */}
           <section className="cell agenda">
-            <span className="label">Coming up</span>
+            <span className="label">{selectedDay ? 'Events' : 'Coming up'}</span>
             <div className="agenda-list">
-              {agenda.length ? agenda.map(group => (
+              {shownGroups.length ? shownGroups.map(group => (
                 <div className="group" key={group.day}>
                   <h3>{dayLabel(group.day, todayKey)}</h3>
-                  {group.items.map(e => (
+                  {group.items.length ? group.items.map(e => (
                     <div className="item" key={`${e.id}-${group.day}`}>
                       <span className="time">{e.allDay ? 'All day' : fmtTime(new Date(e.start))}</span>
                       <span className={`mark mark-${e.calendarIndex % 5}`} />
                       <span className="title">{e.title}</span>
                     </div>
-                  ))}
+                  )) : <p className="empty">Nothing on this day.</p>}
                 </div>
               )) : <p className="empty">No upcoming events.</p>}
             </div>
             {isDemo && <p className="agenda-note">Sample events. Add Google Calendar credentials to see yours.</p>}
+
+            {visibleNote && (
+              <div className={`note note-${visibleNote.color}`} role="status">
+                <button className="note-x" onClick={dismissNote} aria-label="Dismiss note"><X size={16} /></button>
+                <p>{visibleNote.text}</p>
+                <small>{timeLeft(visibleNote.expiresAt, now.getTime())}</small>
+              </div>
+            )}
+
+            <button className="add-note" title="New note" aria-label="New sticky note"
+              onClick={() => { setNoteError(''); setShowComposer(true); }}><Plus size={18} /></button>
           </section>
 
           {/* seven-day forecast */}
@@ -491,6 +627,55 @@ export default function Dashboard() {
           <button className="gear" aria-label="Open settings" onClick={() => setShowSettings(true)}><Settings2 size={16} /></button>
         </div>
       </div>
+
+      {showComposer && (
+        <div className="backdrop center" onClick={() => setShowComposer(false)}>
+          <form className="composer" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); postNote(); }}>
+            <div className="drawer-head">
+              <h2>New note</h2>
+              <button type="button" className="close" onClick={() => setShowComposer(false)} aria-label="Close"><X size={18} /></button>
+            </div>
+
+            <textarea className={`input note-input note-${noteColor}`} rows={4} maxLength={NOTE_MAX} autoFocus
+              value={noteText} placeholder="Pick up milk, call Amma..." aria-label="Note text"
+              onChange={e => setNoteText(e.target.value)} />
+            <div className="note-count">{noteText.length}/{NOTE_MAX}</div>
+
+            <div className="color-field">
+              <span className="field-label">Colour</span>
+              <div className="swatch-row" role="radiogroup" aria-label="Note colour">
+                {NOTE_COLORS.map(c => (
+                  <button type="button" key={c} role="radio" aria-checked={noteColor === c} aria-label={c}
+                    className={`color-btn note-${c} ${noteColor === c ? 'on' : ''}`} onClick={() => setNoteColor(c)}>
+                    {noteColor === c && <Check size={16} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <span className="field-label">Disappears after</span>
+            <div className="chip-row" role="radiogroup" aria-label="Expiry">
+              {NOTE_EXPIRIES.map(x => (
+                <button type="button" key={x.minutes} role="radio" aria-checked={noteMinutes === x.minutes}
+                  className={`chip ${noteMinutes === x.minutes ? 'on' : ''}`} onClick={() => setNoteMinutes(x.minutes)}>
+                  {x.label}
+                </button>
+              ))}
+            </div>
+
+            {!keySaved && (
+              <>
+                <label className="field-label" htmlFor="note-key">Passcode (asked once on this device)</label>
+                <input id="note-key" type="password" className="input" value={noteKey}
+                  onChange={e => setNoteKey(e.target.value)} autoComplete="current-password" />
+              </>
+            )}
+            {noteError && <p className="field-error">{noteError}</p>}
+
+            <button type="submit" className="btn done" disabled={noteBusy || !noteText.trim()}>{noteBusy ? 'Posting' : 'Post note'}</button>
+          </form>
+        </div>
+      )}
 
       {showSettings && (
         <div className="backdrop" onClick={() => setShowSettings(false)}>
